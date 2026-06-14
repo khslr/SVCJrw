@@ -1,0 +1,15 @@
+Name of Quantlet: SVCJrw_estimate_parameters
+
+Published in: SVCJrw
+
+Description: Estimates SVCJ model parameters for CRIX prices with rolling windows and stores the resulting parameter time series for downstream graph and clustering Quantlets.
+
+Keywords: SVCJ, stochastic volatility, correlated jumps, MCMC, rolling window, CRIX, cryptocurrency
+
+Author: Konstantin Haeusler
+
+Submitted: 2026-06-14
+
+Input: ../data/crix_data.csv
+
+Output: param_t_all.rda, param_t_all.csv

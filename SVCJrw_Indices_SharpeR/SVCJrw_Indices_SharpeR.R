@@ -1,149 +1,109 @@
-##############################################
-# R_Script for evaluation of CC Indices#######
-##############################################
-library(quantmod)
-library(moments)
-library(corrplot)
-library(xtable)
-library(RColorBrewer)
-display.brewer.all()
-colors <- brewer.pal(11, "Paired")
+this_file <- if (exists("current_script")) current_script else sub(
+  "^--file=", "",
+  grep("^--file=", commandArgs(FALSE), value = TRUE)[1]
+)
+source(file.path(dirname(dirname(normalizePath(this_file))), "R", "utils.R"))
 
-###############################
-# Set directory and load data #
-###############################
-load(file = "all_indices.rda")
-load(file = "/Users/konstantin/Desktop/dateien/IRTG 1792/econCRIX/svcj/svcj/1st_paper_KH_Quantlets/KH_Indices_SharpeR/daily_sums_n.rda")
+require_packages(c("moments", "corrplot", "xtable", "RColorBrewer"))
 
-#merge
-data <- merge(test5, daily.sums.n[, c("date", "total_mc")], by.x = "Date", by.y = "date", all.x = T)
+paths <- project_paths(this_file)
+colors <- RColorBrewer::brewer.pal(11, "Paired")
+
+indices <- load_object(file.path(paths$script_dir, "all_indices.rda"), "test5")
+daily_sums <- load_object(file.path(paths$script_dir, "daily_sums_n.rda"), "daily.sums.n")
+
+data <- merge(indices, daily_sums[, c("date", "total_mc")], by.x = "Date", by.y = "date", all.x = TRUE)
 data$TMI <- NULL
-names(data)[names(data) =="total_mc"] <- "TMI"
-data <- data[-1,]
+names(data)[names(data) == "total_mc"] <- "TMI"
+data <- data[-1, ]
 
-##########################
-#Statistics of Indices####
-##########################
+index_names <- names(data)[-1]
+normed_names <- paste0(index_names, "_normed")
+return_names <- paste0(index_names, "_return")
 
-#norm indices
-index.names <- names(data)[-1]
-for (i in index.names) {
-  data[, paste(i, "_normed", sep = "")] <-data[, i] / data[1,i] *1000
-}
+data[normed_names] <- lapply(index_names, function(index) data[[index]] / data[[index]][1] * 1000)
+data[return_names] <- lapply(index_names, function(index) simple_returns(data[[index]]))
 
-#compute returns
-for (i in index.names) {
-  data[, paste(i, "_return", sep ="")] <- Delt(data[,i])
-}
-
-#moments
-avg_returns <- apply(data[,paste(index.names, "_return", sep = "")], 2, FUN = function(x){mean(x, na.rm = T)})
-standarddeviation_returns <- apply(data[,paste(index.names, "_return", sep = "")], 2, FUN = function(x){sd(x, na.rm = T)})
-skewness <- apply(data[,paste(index.names, "_return", sep = "")], 2, FUN = function(x){skewness(x, na.rm = T)})
-kurtosis <- apply(data[,paste(index.names, "_return", sep = "")], 2, FUN = function(x){kurtosis(x, na.rm = T)})
+returns <- data[return_names]
+sample_size <- colSums(!is.na(returns))
+avg_returns <- vapply(returns, mean, numeric(1), na.rm = TRUE)
+standarddeviation_returns <- vapply(returns, stats::sd, numeric(1), na.rm = TRUE)
+skewness <- vapply(returns, moments::skewness, numeric(1), na.rm = TRUE)
+kurtosis <- vapply(returns, moments::kurtosis, numeric(1), na.rm = TRUE)
 sharpe_ratios <- avg_returns / standarddeviation_returns
 
-#PSR
-psr <- NULL
-for (i in c(1:6)) {
-  input <- (sharpe_ratios[[i]] * sqrt(len -1)) / sqrt(1-skewness[[i]] * sharpe_ratios[[i]] + ((kurtosis[[i]] -1)/4)*sharpe_ratios[[i]]^2)
-  tmp <- pnorm(input)
-  print(tmp)
-  psr <- rbind(psr, tmp)
-}
+psr_input <- (sharpe_ratios * sqrt(sample_size - 1)) /
+  sqrt(1 - skewness * sharpe_ratios + ((kurtosis - 1) / 4) * sharpe_ratios^2)
 
-output <- data.frame(sharpe_ratio = sharpe_ratios, 
-                     returns = avg_returns, 
-                     vola = standarddeviation_returns,
-                     skewness = skewness,
-                     kurtosis = kurtosis,
-                     PSR = psr,
-                     row.names = index.names)
-xtable(output, digits = 3)
-
-##########################
-#Visualization of Indices#
-##########################
-
-par(xpd = T, mar = par()$mar + c(0,0,0,7),bg=NA)
-
-plot(data$TMI_normed ~data$Date,  type ="l", ylim = c(0, 2000), xlab="", 
-     ylab="Index Values", lwd = 2, lty = 1)
-lines(data[,"CRIX_normed"] ~ data$Date, type = "l", lty=3, lwd=2.2)
-lines(data[,"Bitwise10_normed"] ~ data$Date, type="l", col= colors[3], lwd=1.5, lty=3) #15
-lines(data[,"CCI30_normed"] ~ data$Date, type="l", col= colors[2], lwd=1.5, lty=3)                 #19
-lines(data[,"F5_normed"] ~ data$Date, type="l", col= colors[6], lwd=1.5, lty=3)                 #23
-lines(data[,"BGCI_normed"] ~ data$Date, type="l", col= colors[8], lwd=1.5, lty=3)    #25
-
-legend("right",
-       inset=c(-0.3,0), xpd = T, #cancel out when not outside
-       legend=index.names, 
-       col=c("black",colors[c(3,2,6,8)], "black"),
-       #pch=c(19), pt.cex=1, 
-       #bg='lightgrey',
-       cex = 0.8,
-       lwd = 3,
-       lty = c(rep(3.5,5),1.5)
-       #text.col = c("black", colors)
+output <- data.frame(
+  sharpe_ratio = sharpe_ratios,
+  returns = avg_returns,
+  vola = standarddeviation_returns,
+  skewness = skewness,
+  kurtosis = kurtosis,
+  PSR = stats::pnorm(psr_input),
+  row.names = index_names
 )
+print(xtable::xtable(output, digits = 3))
 
-############################
-#Corrletation Indices & TMI#
-############################
+save_png(file.path(paths$script_dir, "normed_indices.png"), {
+  par(xpd = TRUE, mar = par()$mar + c(0, 0, 0, 7), bg = NA)
+  plot(
+    data$TMI_normed ~ data$Date,
+    type = "l",
+    ylim = c(0, 2000),
+    xlab = "",
+    ylab = "Index Values",
+    lwd = 2,
+    lty = 1
+  )
 
-ind.cor <- cor(data[, index.names], use="complete.obs")
-corrplot(ind.cor,method = "color", order = "AOE")
-
-corrplot.mixed(ind.cor, 
-               order = "alphabet", 
-               lower = "number", 
-               upper = "circle",
-               tl.col = "black",
-               cl.lim = c(0,1)
-              )
-corrplot.mixed(ind.cor, 
-               #method = "color", 
-               order = "alphabet", 
-               lower = "number", 
-               upper = "circle",
-               upper.col= colorRampPalette(c("white","lightpink","pink"))(200),
-               lower.col= colorRampPalette(c("blue","white","lightpink","pink","red"))(200),
-               tl.col = "black",
-               cl.lim = c(0,1)
-)
-
-#Bootstrap samples, compute correlation, average or boxplots
-
-
-# Creating Function to obtain Correlations from the data
-corr_tmi_index <- function(sel.index, indices) {
-  dt <- data[indices,c(sel.index,"TMI" )] 
-  fit.cor <- cor(dt[,sel.index], dt[,"TMI"], use="complete.obs")
-  return(fit.cor)
-} 
-corr_tmi_index(sel.index = "CRIX", indices= c(1:100))
-
-cor.vec <- NA
-for (i in c(2:506)) {
-  tmp <- i+ 100
-  ind <- c(1:tmp)
-  tmp.cor <- corr_tmi_index(sel.index = "CRIX", indices=ind)
-  cor.vec[i] <- tmp.cor
-}
-
-boxplot(cor.vec)
-
-library("vioplot")
-vioplot(cor.vec.ma, col = 1:5, border = 1:5)
-
-#now with random draws
-cor.vec.ma <- data.frame()
-for (j in index.names) {
-  for (i in c(1:1000)) {
-    ind <- sample(c(1:606), 100)
-    tmp.cor <- corr_tmi_index(sel.index = j, indices=ind)
-    cor.vec.ma[i,j] <- tmp.cor
+  line_colors <- c("black", colors[c(3, 2, 6, 8)], "black")
+  for (i in seq_along(index_names[-length(index_names)])) {
+    index <- index_names[-length(index_names)][i]
+    lines(
+      data[[paste0(index, "_normed")]] ~ data$Date,
+      type = "l",
+      col = line_colors[i],
+      lwd = 1.8,
+      lty = 3
+    )
   }
-}
-vioplot(cor.vec.ma, col = 1:5, border = 1:5)
 
+  legend(
+    "right",
+    inset = c(-0.3, 0),
+    xpd = TRUE,
+    legend = index_names,
+    col = line_colors,
+    cex = 0.8,
+    lwd = 3,
+    lty = c(rep(3.5, length(index_names) - 1), 1.5)
+  )
+})
+
+index_correlations <- stats::cor(data[, index_names], use = "complete.obs")
+save_png(file.path(paths$script_dir, "corrplot_indices_blue.png"), {
+  corrplot::corrplot.mixed(
+    index_correlations,
+    order = "alphabet",
+    lower = "number",
+    upper = "circle",
+    upper.col = colorRampPalette(c("white", "lightpink", "pink"))(200),
+    lower.col = colorRampPalette(c("blue", "white", "lightpink", "pink", "red"))(200),
+    tl.col = "black"
+  )
+})
+
+corr_tmi_index <- function(sel_index, rows, source_data = data) {
+  stats::cor(source_data[rows, sel_index], source_data[rows, "TMI"], use = "complete.obs")
+}
+
+set.seed(1234)
+bootstrap_correlations <- replicate(1000, {
+  rows <- sample(seq_len(nrow(data)), 100)
+  vapply(index_names, corr_tmi_index, numeric(1), rows = rows)
+})
+
+bootstrap_correlations <- as.data.frame(t(bootstrap_correlations))
+saveRDS(bootstrap_correlations, file.path(paths$script_dir, "bootstrap_correlations.rds"))
